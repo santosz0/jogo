@@ -83,45 +83,49 @@
         const canvas = document.getElementById("tela");
         const ctx = canvas.getContext("2d");
 
-        // Estado do Jogador
+        // --- ESTADO DO JOGADOR ---
         let x = 50;
         let y = 50;
         const tamanho = 30;
         const velocidade = 5;
 
-        // Estado da Fruta
+        // --- ESTADO DA FRUTA ---
         const tamanhoFruta = 20;
         let frutaX = 0;
         let frutaY = 0;
-        let pontos = 0;
 
-        // Mapeamento de Entradas
+        // --- PROGRESSO E REGRAS DE FASE ---
+        let pontos = 0;
+        let fase = 1;
+        let pontosNaFase = 0;
+        let gameOver = false;
+        let vitoria = false;
+
+        // Meta ajustada: 5 frutas
+        const metaFrutas = 5;
+
+        // Timer ajustado: 12 segundos
+        let tempoRestante = 12;
+        let intervalTimer = null;
+
+        // --- OBSTÁCULOS E ANIMAÇÃO (Fase 2) ---
+        let bombas = [];
+        let explosoes = [];
+
+        // --- CONTROLES ---
         const teclas = {};
 
-        // 1. Suporte a Teclado (PC)
         document.addEventListener("keydown", (e) => teclas[e.key] = true);
         document.addEventListener("keyup", (e) => teclas[e.key] = false);
 
-        // 2. Suporte Avançado a Touch e Mouse (Safari iOS & Mobile)
         function vincularBotaoControle(id, tecla) {
             const btn = document.getElementById(id);
+            const ativar = (e) => { if (e.cancelable) e.preventDefault(); teclas[tecla] = true; };
+            const desativar = (e) => { if (e.cancelable) e.preventDefault(); teclas[tecla] = false; };
 
-            const ativar = (e) => {
-                if (e.cancelable) e.preventDefault();
-                teclas[tecla] = true;
-            };
-
-            const desativar = (e) => {
-                if (e.cancelable) e.preventDefault();
-                teclas[tecla] = false;
-            };
-
-            // Eventos de Toque (Mobile/Safari)
             btn.addEventListener("touchstart", ativar, { passive: false });
             btn.addEventListener("touchend", desativar, { passive: false });
             btn.addEventListener("touchcancel", desativar, { passive: false });
-
-            // Eventos de Mouse (Fallback Desktop)
             btn.addEventListener("mousedown", ativar);
             btn.addEventListener("mouseup", desativar);
             btn.addEventListener("mouseleave", desativar);
@@ -132,58 +136,286 @@
         vincularBotaoControle("btn-esquerda", "ArrowLeft");
         vincularBotaoControle("btn-direita", "ArrowRight");
 
-        function gerarFruta() {
-            // Garante dimensões válidas antes de posicionar a fruta
-            const larguraMaxima = (canvas.width || 600) - tamanhoFruta;
-            const alturaMaxima = (canvas.height || 600) - tamanhoFruta;
-            
-            frutaX = Math.floor(Math.random() * larguraMaxima);
-            frutaY = Math.floor(Math.random() * alturaMaxima);
+        // --- LÓGICA DE COLISÃO ---
+        function colidiu(aX, aY, aTam, bX, bY, bTam) {
+            return aX < bX + bTam && aX + aTam > bX && aY < bY + bTam && aY + aTam > bY;
         }
 
+        // --- GERENCIAMENTO DE TIMER ---
+        function iniciarTimer() {
+            pararTimer();
+            tempoRestante = 12; // 12 segundos
+            intervalTimer = setInterval(() => {
+                if (fase === 1 && !gameOver && !vitoria) {
+                    tempoRestante--;
+                    if (tempoRestante <= 0) {
+                        tempoRestante = 0;
+                        gameOver = true;
+                        pararTimer();
+                    }
+                }
+            }, 1000);
+        }
+
+        function pararTimer() {
+            if (intervalTimer) clearInterval(intervalTimer);
+        }
+
+        // --- GERADORES DE ELEMENTOS ---
+        function gerarFruta() {
+            let valida = false;
+            const larguraMaxima = canvas.width - tamanhoFruta;
+            const alturaMaxima = canvas.height - tamanhoFruta;
+
+            while (!valida) {
+                frutaX = Math.floor(Math.random() * larguraMaxima);
+                frutaY = Math.floor(Math.random() * alturaMaxima);
+                valida = true;
+
+                for (let bomba of bombas) {
+                    if (colidiu(frutaX, frutaY, tamanhoFruta, bomba.x, bomba.y, bomba.tamanho)) {
+                        valida = false;
+                        break;
+                    }
+                }
+            }
+        }
+
+        function gerarBombas() {
+            bombas = [];
+            if (fase >= 2) {
+                const quantidade = 5;
+                for (let i = 0; i < quantidade; i++) {
+                    let bX, bY;
+                    do {
+                        bX = Math.floor(Math.random() * (canvas.width - 25));
+                        bY = Math.floor(Math.random() * (canvas.height - 25));
+                    } while (colidiu(x, y, tamanho + 50, bX, bY, 25));
+
+                    bombas.push({ x: bX, y: bY, tamanho: 25 });
+                }
+            }
+        }
+
+        function criarExplosao(expX, expY) {
+            explosoes.push({
+                x: expX,
+                y: expY,
+                raio: 5,
+                raioMaximo: 30,
+                opacidade: 1
+            });
+        }
+
+        // --- FLUXO DAS FASES ---
+        function reiniciarFase() {
+            x = 50;
+            y = 50;
+            pontosNaFase = 0;
+            gameOver = false;
+            vitoria = false;
+            explosoes = [];
+            
+            if (fase === 1) {
+                iniciarTimer();
+            } else {
+                pararTimer();
+            }
+
+            gerarBombas();
+            gerarFruta();
+        }
+
+        function proximaFase() {
+            fase++;
+            reiniciarFase();
+        }
+
+        // --- ATUALIZAÇÃO DE ESTADO ---
         function atualizar() {
-            // Movimento
+            if (gameOver || vitoria) return;
+
             if (teclas["ArrowRight"]) x += velocidade;
             if (teclas["ArrowLeft"])  x -= velocidade;
             if (teclas["ArrowUp"])    y -= velocidade;
             if (teclas["ArrowDown"])  y += velocidade;
 
-            // Limites do Canvas (Paredes)
             if (x < 0) x = 0;
             if (y < 0) y = 0;
             if (x + tamanho > canvas.width) x = canvas.width - tamanho;
             if (y + tamanho > canvas.height) y = canvas.height - tamanho;
 
-            // Colisão com a Fruta
-            if (
-                x < frutaX + tamanhoFruta &&
-                x + tamanho > frutaX &&
-                y < frutaY + tamanhoFruta &&
-                y + tamanho > frutaY
-            ) {
-                pontos += 1;
+            // Checar colisão com Bombas (Fase 2)
+            for (let bomba of bombas) {
+                if (colidiu(x, y, tamanho, bomba.x, bomba.y, bomba.tamanho)) {
+                    criarExplosao(bomba.x + bomba.tamanho / 2, bomba.y + bomba.tamanho / 2);
+                    gameOver = true;
+                    pararTimer();
+                    return;
+                }
+            }
+
+            // Checar Coleta da Fruta
+            if (colidiu(x, y, tamanho, frutaX, frutaY, tamanhoFruta)) {
+                pontos++;
+                pontosNaFase++;
+
+                // Condição para passar da Fase 1 (5 Frutas)
+                if (fase === 1 && pontosNaFase >= metaFrutas) {
+                    proximaFase();
+                    return;
+                }
+                
+                // Condição para passar da Fase 2 (5 Frutas)
+                if (fase === 2 && pontosNaFase >= metaFrutas) {
+                    vitoria = true;
+                    pararTimer();
+                    return;
+                }
+
                 gerarFruta();
+            }
+
+            // Atualiza Animações
+            for (let i = explosoes.length - 1; i >= 0; i--) {
+                let exp = explosoes[i];
+                exp.raio += 2;
+                exp.opacidade -= 0.05;
+                if (exp.opacidade <= 0) {
+                    explosoes.splice(i, 1);
+                }
             }
         }
 
+        // --- DESENHO NA TELA ---
         function desenhar() {
-            // Limpa a tela
             ctx.fillStyle = "black";
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Desenha a Fruta
+            // Bombas
+            for (let bomba of bombas) {
+                ctx.fillStyle = "#ff6600";
+                ctx.beginPath();
+                ctx.arc(bomba.x + 12.5, bomba.y + 12.5, 12.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = "white";
+                ctx.fillRect(bomba.x + 10, bomba.y - 4, 5, 5);
+            }
+
+            // Fruta
             ctx.fillStyle = "red";
             ctx.fillRect(frutaX, frutaY, tamanhoFruta, tamanhoFruta);
 
-            // Desenha o Jogador
-            ctx.fillStyle = "green";
-            ctx.fillRect(x, y, tamanho, tamanho);
+            // Jogador
+            if (!gameOver) {
+                ctx.fillStyle = "green";
+                ctx.fillRect(x, y, tamanho, tamanho);
+            }
 
-            // Desenha a Pontuação
+            // Animação de Explosão
+            for (let exp of explosoes) {
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, exp.opacidade);
+                ctx.fillStyle = "yellow";
+                ctx.beginPath();
+                ctx.arc(exp.x, exp.y, exp.raio, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            // HUD
             ctx.fillStyle = "white";
-            ctx.font = "20px Arial";
-            ctx.fillText(`Pontos: ${pontos}`, 20, 35);
+            ctx.font = "18px Arial";
+            ctx.fillText(`Pontos Totais: ${pontos}`, 15, 30);
+            ctx.fillText(`Fase: ${fase}`, 15, 55);
+            ctx.fillText(`Frutas na Fase: ${pontosNaFase}/${metaFrutas}`, 15, 80);
+
+            if (fase === 1) {
+                ctx.fillStyle = tempoRestante <= 3 ? "red" : "yellow";
+                ctx.fillText(`Tempo: ${tempoRestante}s`, 470, 30);
+            }
+
+            // --- TELA DE GAME OVER ESTILIZADA ---
+            if (gameOver) {
+                ctx.fillStyle = "rgba(15, 15, 15, 0.9)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Caixinha Central (Card)
+                ctx.fillStyle = "#222";
+                ctx.strokeStyle = "#ff3333";
+                ctx.lineWidth = 4;
+                ctx.strokeRect(80, 180, 440, 240);
+                ctx.fillRect(80, 180, 440, 240);
+
+                // Título com Sombra Neon Red
+                ctx.shadowColor = "red";
+                ctx.shadowBlur = 15;
+                ctx.fillStyle = "#ff3333";
+                ctx.font = "bold 36px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText("☠ VOCÊ MORREU ☠", canvas.width / 2, 240);
+
+                // Subtítulo
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = "#cccccc";
+                ctx.font = "18px Arial";
+                const motivo = fase === 1 && tempoRestante === 0 ? "O tempo acabou!" : "Você pisou em uma bomba!";
+                ctx.fillText(motivo, canvas.width / 2, 285);
+
+                // Botão de Reinício
+                ctx.fillStyle = "#ff3333";
+                ctx.fillRect(150, 330, 300, 45);
+                
+                ctx.fillStyle = "white";
+                ctx.font = "bold 16px Arial";
+                ctx.fillText("TOQUE PARA REINICIAR", canvas.width / 2, 358);
+                
+                ctx.textAlign = "left";
+            }
+
+            // --- TELA DE VITÓRIA ESTILIZADA ---
+            if (vitoria) {
+                ctx.fillStyle = "rgba(15, 15, 15, 0.9)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Caixinha Central (Card)
+                ctx.fillStyle = "#222";
+                ctx.strokeStyle = "#00ff66";
+                ctx.lineWidth = 4;
+                ctx.strokeRect(80, 180, 440, 240);
+                ctx.fillRect(80, 180, 440, 240);
+
+                // Título com Sombra Neon Green
+                ctx.shadowColor = "#00ff66";
+                ctx.shadowBlur = 15;
+                ctx.fillStyle = "#00ff66";
+                ctx.font = "bold 38px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText("★ PARABÉNS! ★", canvas.width / 2, 245);
+
+                // Subtítulo
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "18px Arial";
+                ctx.fillText("Você concluiu todas as fases!", canvas.width / 2, 290);
+
+                // Destaque de Pontuação
+                ctx.fillStyle = "#00ff66";
+                ctx.font = "bold 20px Arial";
+                ctx.fillText(`Pontuação Total: ${pontos}`, canvas.width / 2, 340);
+
+                ctx.textAlign = "left";
+            }
         }
+
+        function tentarReiniciar() {
+            if (gameOver) {
+                reiniciarFase();
+            }
+        }
+
+        canvas.addEventListener("touchstart", tentarReiniciar);
+        canvas.addEventListener("click", tentarReiniciar);
 
         function loop() {
             atualizar();
@@ -191,9 +423,8 @@
             requestAnimationFrame(loop);
         }
 
-        // Inicialização segura após o carregamento da página
         window.addEventListener("load", () => {
-            gerarFruta();
+            reiniciarFase();
             loop();
         });
     </script>
